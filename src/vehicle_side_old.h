@@ -18,21 +18,20 @@ class DynamixelClient {
         float reel_speed;       // rad/s
         float desired_depth;    // ft
         float sample_time;      // seconds
-        float current_torque;   // motor torque
+        float current_torque;
 
         ros::ServiceClient dynamixel_client;
         ros::Subscriber dynamixel_torque;
 
     public:
         DynamixelClient(ros::NodeHandle &nh, float input_speed, float input_depth, float input_time):
-                    nh_(nh),
-                    reel_speed(input_speed),
-                    desired_depth(input_depth),
-                    sample_time(input_time),
-                    current_torque(0),
-                    dynamixel_client(nh_.serviceClient<dynamixel_controllers::SetSpeed>("/reel_controller/set_speed")),
-                    dynamixel_torque(nh_.subscribe("/reel_controller/state", 100, &DynamixelClient::updateTorque, this))
-
+                            nh_(nh),
+                            reel_speed(input_speed),
+                            desired_depth(input_depth),
+                            sample_time(input_time),
+                            current_torque(0),
+                            dynamixel_client(nh_.serviceClient<dynamixel_controllers::SetSpeed>("/reel_controller/set_speed")),
+                            dynamixel_torque(nh_.subscribe("/reel_controller/state", 1000, &DynamixelClient::updateTorque, this))
         {}
 
         void actuateDynamixel() {
@@ -52,23 +51,21 @@ class DynamixelClient {
 
             ROS_INFO("Raising Sonde.");
             temp_srv.request.speed = reel_speed;   // Positive speed reels line in
-
-            //Raise for time:
             dynamixel_client.call(temp_srv);       // Raise Sonde
-            ros::Duration(duration).sleep();
 
-            //Raise until torque:
-            //while (current_torque < 0.8) {          // 0.8 chosen arbitrarily
-            //   ros::spinOnce();
+            //while (current_torque < 1.5) {
+            //    ros::spinOnce();
             //}
 
+            ROS_INFO("Sonde Raised");
+            ros::Duration(duration).sleep();
             temp_srv.request.speed = 0.0;
             dynamixel_client.call(temp_srv);
         }
 
         void updateTorque(const dynamixel_msgs::JointState& dynamixelState) {
             current_torque = dynamixelState.load;
-        }
+        } 
 };
 
 class CollectData {
@@ -77,7 +74,6 @@ class CollectData {
         bool collecting_data;
         bool look_for_heartbeat;
         bool sampling;
-        bool reeling_in_sonde;
         float depth;                         // depth to sample at (ft)
         int sample_count;
         rosbag::Bag bag;
@@ -88,7 +84,6 @@ class CollectData {
         ros::Publisher vehicle_signal;       // send teensy signal to begin sampling
         ros::Subscriber teensy_signal;    // receive teensy signal sampling has begun
         ros::Subscriber receive_data;        // receive aro-ft data from teensy
-        DynamixelClient dynamixel;
 
     public:
         CollectData(ros::NodeHandle &nh):
@@ -96,7 +91,6 @@ class CollectData {
                     collecting_data(false),
                     look_for_heartbeat(false),
                     sampling(false),
-                    reeling_in_sonde(false),
                     depth(0.0),
                     sample_count(0),
                     bag("collected_data.bag", rosbag::bagmode::Write),
@@ -106,9 +100,7 @@ class CollectData {
                     check_count_timer(nh_.createTimer(ros::Duration(1), &CollectData::checkCountCb, this)),
                     vehicle_signal(nh_.advertise<std_msgs::Empty>("vehicle_signal", 1)),
                     teensy_signal(nh_.subscribe("teensy_signal", 1, &CollectData::teensySignalCb, this)),
-                    receive_data(nh_.subscribe("collected_data", 1000, &CollectData::writeToBag, this)),
-                    dynamixel(nh_, 5.0, depth, 5.0)
-
+                    receive_data(nh_.subscribe("collected_data", 1000, &CollectData::writeToBag, this))
 /*
                     begin_sampling(nh_.advertise<std_msgs::Empty>("begin_sampling", 1)),
                     sampling_started(nh_.subscribe("sampling_started", 1, &CollectData::samplingStartedCb, this)),
@@ -138,7 +130,7 @@ class CollectData {
             }
         }
 
-        void receiveHeartbeatCb(const std_msgs::Float32& msg) {
+        void receiveHeartbeatCb(const std_msgs::Empty& msg) {
             //callback for incrementing count when heartbeat is received
             //if collecting is false do nothing, if it's true then increment count
 
@@ -172,15 +164,12 @@ class CollectData {
             if (sampling) {
                 ROS_INFO("Sampling started");
                 DynamixelClient dynamixel(nh_, 5.0, depth, 5.0); //Node, reel speed (rad/s), depth to sample at (ft), time to sample at desired depth (sec)
-
                 dynamixel.actuateDynamixel();
 
                 //after Sonde has been raiseed again begin listening for heart beat
+                ros::spinOnce();
                 hb_count = 0;
                 look_for_heartbeat = true;
-                reeling_in_sonde = true;
-                ros::spinOnce();
-
                 check_count_timer.start();
             } else {
                 collecting_data = false;
