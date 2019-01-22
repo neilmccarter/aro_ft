@@ -54,13 +54,23 @@ class DynamixelClient {
             temp_srv.request.speed = reel_speed;   // Positive speed reels line in
 
             //Raise for time:
+            ROS_INFO("dynamixel client call");
             dynamixel_client.call(temp_srv);       // Raise Sonde
-            ros::Duration(duration).sleep();
+            //ROS_INFO("sleeping");
+            //ros::Duration(duration).sleep();
 
-            //Raise until torque:
-            //while (current_torque < 0.8) {          // 0.8 chosen arbitrarily
-            //   ros::spinOnce();
-            //}
+	    ros::Duration(2).sleep(); // Give it a moment to reverse direction and torque sign change, perhaps make it a fraction of duration?
+            // Raise until torque:
+            while (current_torque > -0.18) {  // -0.18 chosen arbitrarily, will need to be higher in water
+               ROS_INFO("Torque: %f", current_torque);
+	       ros::spinOnce();	 // Should process message from subscriber dynamixel_torque
+               ros::Duration(0.5).sleep();
+            }
+
+	    // Unreel slightly so not taught
+	    temp_srv.request.speed = reel_speed;
+	    dynamixel_client.call(temp_srv);
+	    ros::Duration(0.25).sleep();
 
             temp_srv.request.speed = 0.0;
             dynamixel_client.call(temp_srv);
@@ -102,11 +112,11 @@ class CollectData {
                     bag("collected_data.bag", rosbag::bagmode::Write),
                     nh_(nh),
                     begin_collection(nh_.subscribe("begin_collection", 1, &CollectData::beginCollectionCb, this)),
-                    increment_heartbeat(nh_.subscribe("teensy_hb", 10, &CollectData::receiveHeartbeatCb, this)),
+                    increment_heartbeat(nh_.subscribe("teensy_hb", 2000, &CollectData::receiveHeartbeatCb, this)),
                     check_count_timer(nh_.createTimer(ros::Duration(1), &CollectData::checkCountCb, this)),
                     vehicle_signal(nh_.advertise<std_msgs::Empty>("vehicle_signal", 1)),
                     teensy_signal(nh_.subscribe("teensy_signal", 1, &CollectData::teensySignalCb, this)),
-                    receive_data(nh_.subscribe("collected_data", 1000, &CollectData::writeToBag, this)),
+                    receive_data(nh_.subscribe("collected_data", 2000, &CollectData::writeToBag, this)),
                     dynamixel(nh_, 5.0, depth, 5.0)
 
 /*
@@ -142,6 +152,7 @@ class CollectData {
             //callback for incrementing count when heartbeat is received
             //if collecting is false do nothing, if it's true then increment count
 
+	    ROS_INFO("RHBBc: look_for_heartbeat: %s, hb_cout: %d", look_for_heartbeat ? "true" : "false", hb_count);
             if (look_for_heartbeat && hb_count < 10) {
                 hb_count++;
                 ROS_INFO("heartbeat");
@@ -150,7 +161,7 @@ class CollectData {
 
         void checkCountCb(const ros::TimerEvent &) {
             //if heartbeat count is > 3, publish empty msg to teensy to begin transmit then close timer
-
+	    ROS_INFO("CCCb: hb_count: %d", hb_count);
             if (hb_count > 3) {
                 if (!sampling) {
                     ROS_INFO("Received heartbeat, starting probe sampling.");
@@ -179,7 +190,10 @@ class CollectData {
                 hb_count = 0;
                 look_for_heartbeat = true;
                 reeling_in_sonde = true;
+
+		ROS_INFO("Before Spinonce");
                 ros::spinOnce();
+		ROS_INFO("After Spinonce");
 
                 check_count_timer.start();
             } else {
